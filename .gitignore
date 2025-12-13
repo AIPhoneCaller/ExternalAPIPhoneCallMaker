@@ -1,0 +1,21 @@
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+*.json
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Audio outputs
+*.wav
+*.mp3
+conversation.json
+tts_latest.wav
+
+# OS
+.DS_Store

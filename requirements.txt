@@ -1,0 +1,30 @@
+# Hebrew Phone Call Assistant - OpenAI Integration
+# STT: Local Whisper, LLM & TTS: OpenAI
+
+# Audio recording and processing
+sounddevice==0.5.3
+soundfile==0.13.1
+numpy==2.3.5
+
+# Speech-to-Text (Local Whisper)
+faster-whisper==1.2.1
+av==16.0.1
+ctranslate2==4.6.1
+tokenizers==0.22.1
+huggingface_hub==1.1.7
+
+# PyTorch (CPU version for Whisper)
+# torch - Install with: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# Audio resampling
+resampy==0.4.3
+
+# OpenAI API (LLM & TTS)
+openai>=1.0.0
+
+# Configuration
+python-dotenv==1.2.1
+
+# Utilities
+tqdm==4.67.1
+typing_extensions==4.15.0
