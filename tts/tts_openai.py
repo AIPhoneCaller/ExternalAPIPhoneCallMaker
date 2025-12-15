@@ -1,74 +1,68 @@
 # tts/tts_openai.py
 import os
 import threading
+import queue
+import time
 import sounddevice as sd
 import soundfile as sf
 from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-_current = {
-    "stop_event": None,
-    "done_event": None,
-    "thread": None,
-}
+_tts_queue = queue.Queue()
+_worker_running = False
+_worker_thread = None
 
 
-def stop_tts():
-    if _current["stop_event"]:
-        print("[TTS] Stop requested")
-        _current["stop_event"].set()
-        sd.stop()
+def _tts_worker():
+    global _worker_running
+    _worker_running = True
+
+    while True:
+        text = _tts_queue.get()
+        if text is None:
+            break
+
+        try:
+            print(f"[TTS] ▶ Speaking: {text}")
+
+            response = client.audio.speech.create(
+                model="gpt-4o-mini-tts",
+                voice="shimmer",
+                input=text,
+                response_format="wav",
+            )
+
+            audio_bytes = response.read()
+
+            with open("tts_latest.wav", "wb") as f:
+                f.write(audio_bytes)
+
+            data, sr = sf.read("tts_latest.wav", dtype="float32")
+            if data.ndim > 1:
+                data = data[:, 0]
+
+            sd.play(data, sr)
+            sd.wait()
+
+        except Exception as e:
+            print(f"[TTS] ERROR: {e}")
+
+        finally:
+            _tts_queue.task_done()
+
+    _worker_running = False
 
 
-def _play_blocking(wav_path: str, stop_event: threading.Event, done_event: threading.Event):
-    print("[TTS] Loading wav")
-    data, sr = sf.read(wav_path, dtype="float32")
+def speak_text(text: str):
+    global _worker_thread
 
-    if data.ndim > 1:
-        data = data[:, 0]
+    if not _worker_running:
+        _worker_thread = threading.Thread(target=_tts_worker, daemon=True)
+        _worker_thread.start()
 
-    try:
-        sd.play(data, sr)
-        while sd.get_stream().active:
-            if stop_event.is_set():
-                print("[TTS] Interrupted")
-                sd.stop()
-                break
-            sd.sleep(50)
-    finally:
-        print("[TTS] Playback finished")
-        done_event.set()
+    _tts_queue.put(text)
 
 
-def speak_text(text: str, voice="shimmer") -> threading.Event:
-    stop_tts()
-
-    print(f"[TTS] Generating speech: {text}")
-
-    response = client.audio.speech.create(
-        model="gpt-4o-mini-tts",
-        voice=voice,
-        input=text,
-        response_format="wav",
-    )
-
-    wav_path = "tts_latest.wav"
-    with open(wav_path, "wb") as f:
-        f.write(response.read())
-
-    stop_event = threading.Event()
-    done_event = threading.Event()
-
-    t = threading.Thread(
-        target=_play_blocking,
-        args=(wav_path, stop_event, done_event),
-        daemon=True,
-    )
-
-    _current["stop_event"] = stop_event
-    _current["done_event"] = done_event
-    _current["thread"] = t
-
-    t.start()
-    return done_event
+def wait_until_all_spoken():
+    _tts_queue.join()
