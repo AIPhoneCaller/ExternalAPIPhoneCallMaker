@@ -19,6 +19,8 @@ Follow **only this section** to get the Pod running.
 ## 2. Install required packages (inside the Pod)
 ```bash
 pip install --no-cache-dir fastapi uvicorn faster-whisper torch soundfile
+pip install --no-cache-dir transformers accelerate safetensors
+pip install --no-cache-dir hf_transfer
 
 3. Create stt_server.py
 cat << 'EOF' > stt_server.py
@@ -67,8 +69,90 @@ def transcribe(req: AudioRequest):
     return {"text": text.strip()}
 EOF
 
+
+==================
+cat << 'EOF' > llm_server.py
+from fastapi import FastAPI
+from pydantic import BaseModel
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, TextIteratorStreamer
+from threading import Thread
+
+app = FastAPI()
+
+MODEL_ID = "google/gemma-7b-it"
+
+print("[LLM] Loading Gemma 7B on GPU...")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID,
+    torch_dtype=torch.float16,
+    device_map="auto"
+)
+print("[LLM] Gemma 7B loaded")
+
+class PromptRequest(BaseModel):
+    prompt: str
+    max_tokens: int = 256
+    temperature: float = 0.7
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.post("/generate")
+def generate(req: PromptRequest):
+    inputs = tokenizer(req.prompt, return_tensors="pt").to(model.device)
+
+    outputs = model.generate(
+        **inputs,
+        max_new_tokens=req.max_tokens,
+        temperature=req.temperature,
+        do_sample=True
+    )
+
+    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return {"text": text}
+
+@app.post("/stream")
+def stream(req: PromptRequest):
+    inputs = tokenizer(req.prompt, return_tensors="pt").to(model.device)
+
+    streamer = TextIteratorStreamer(
+        tokenizer,
+        skip_special_tokens=True,
+        skip_prompt=True
+    )
+
+    generation_kwargs = dict(
+        **inputs,
+        max_new_tokens=req.max_tokens,
+        temperature=req.temperature,
+        do_sample=True,
+        streamer=streamer
+    )
+
+    thread = Thread(target=model.generate, kwargs=generation_kwargs)
+    thread.start()
+
+    def token_generator():
+        for token in streamer:
+            yield token
+
+    return token_generator()
+EOF
+
+=================
+
+
+
+
+
 4. Run the STT server 
 uvicorn stt_server:app --host 0.0.0.0 --port 8000
+
+5. Run the LLM server 
+uvicorn llm_server:app --host 0.0.0.0 --port 8002
 
 5.Verify
 curl http://127.0.0.1:8000/health

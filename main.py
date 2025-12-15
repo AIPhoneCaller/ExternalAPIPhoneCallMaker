@@ -11,7 +11,7 @@ if not RUNPOD:
     from recorder_vad import record_until_silence
 
 from stt.stt_manager import STTManager
-from llm.llm_openai import ask_openai_stream
+from llm.llm_gemma import ask_gemma_stream
 from tts.tts_openai import speak_text, wait_until_all_spoken
 from conversation_saver import ConversationSaver
 
@@ -134,7 +134,7 @@ def main():
             speech_buffer = ""
             last_emit = time.time()
 
-            for chunk in ask_openai_stream(user_text):
+            for chunk in ask_gemma_stream(user_text):
                 chunk = chunk.strip()
                 if not chunk:
                     continue
