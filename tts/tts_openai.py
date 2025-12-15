@@ -24,13 +24,13 @@ def save_wav(audio_bytes: bytes, filename: str):
 
 
 def play_wav(filename: str):
-    subprocess.run(["afplay", filename])
+    if os.uname().sysname == "Darwin":
+        subprocess.run(["afplay", filename])
+    else:
+        subprocess.run(["aplay", filename], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def tts_openai(text, voice="shimmer", save_path="tts_latest.wav") -> bytes:
-    """
-    Generate TTS + play it + return raw PCM audio bytes.
-    """
+def tts_openai(text: str, voice="shimmer", save_path="tts_latest.wav") -> bytes:
     response = client.audio.speech.create(
         model="gpt-4o-mini-tts",
         voice=voice,
@@ -40,10 +40,12 @@ def tts_openai(text, voice="shimmer", save_path="tts_latest.wav") -> bytes:
 
     audio_bytes = response.read() if hasattr(response, "read") else bytes(response)
 
-    # Save WAV
     save_wav(audio_bytes, save_path)
-
-    # Play WAV
     play_wav(save_path)
 
     return audio_bytes
+
+
+# ✅ PUBLIC API — what main.py imports
+def speak_text(text: str, voice="shimmer", save_path="tts_latest.wav") -> bytes:
+    return tts_openai(text, voice=voice, save_path=save_path)
