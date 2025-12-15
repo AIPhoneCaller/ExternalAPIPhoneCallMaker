@@ -1,36 +1,51 @@
 # tts/tts_openai.py
 import os
-import wave
-import subprocess
+import threading
+import sounddevice as sd
+import soundfile as sf
 from openai import OpenAI
 
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    raise RuntimeError("OPENAI_API_KEY is not set.")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-client = OpenAI(api_key=api_key)
-
-SAMPLE_RATE = 24000
-CHANNELS = 1
-SAMPLE_WIDTH = 2
+_current = {
+    "stop_event": None,
+    "done_event": None,
+    "thread": None,
+}
 
 
-def save_wav(audio_bytes: bytes, filename: str):
-    with wave.open(filename, "wb") as wav_file:
-        wav_file.setnchannels(CHANNELS)
-        wav_file.setsampwidth(SAMPLE_WIDTH)
-        wav_file.setframerate(SAMPLE_RATE)
-        wav_file.writeframes(audio_bytes)
+def stop_tts():
+    if _current["stop_event"]:
+        print("[TTS] Stop requested")
+        _current["stop_event"].set()
+        sd.stop()
 
 
-def play_wav(filename: str):
-    if os.uname().sysname == "Darwin":
-        subprocess.run(["afplay", filename])
-    else:
-        subprocess.run(["aplay", filename], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def _play_blocking(wav_path: str, stop_event: threading.Event, done_event: threading.Event):
+    print("[TTS] Loading wav")
+    data, sr = sf.read(wav_path, dtype="float32")
+
+    if data.ndim > 1:
+        data = data[:, 0]
+
+    try:
+        sd.play(data, sr)
+        while sd.get_stream().active:
+            if stop_event.is_set():
+                print("[TTS] Interrupted")
+                sd.stop()
+                break
+            sd.sleep(50)
+    finally:
+        print("[TTS] Playback finished")
+        done_event.set()
 
 
-def tts_openai(text: str, voice="shimmer", save_path="tts_latest.wav") -> bytes:
+def speak_text(text: str, voice="shimmer") -> threading.Event:
+    stop_tts()
+
+    print(f"[TTS] Generating speech: {text}")
+
     response = client.audio.speech.create(
         model="gpt-4o-mini-tts",
         voice=voice,
@@ -38,14 +53,22 @@ def tts_openai(text: str, voice="shimmer", save_path="tts_latest.wav") -> bytes:
         response_format="wav",
     )
 
-    audio_bytes = response.read() if hasattr(response, "read") else bytes(response)
+    wav_path = "tts_latest.wav"
+    with open(wav_path, "wb") as f:
+        f.write(response.read())
 
-    save_wav(audio_bytes, save_path)
-    play_wav(save_path)
+    stop_event = threading.Event()
+    done_event = threading.Event()
 
-    return audio_bytes
+    t = threading.Thread(
+        target=_play_blocking,
+        args=(wav_path, stop_event, done_event),
+        daemon=True,
+    )
 
+    _current["stop_event"] = stop_event
+    _current["done_event"] = done_event
+    _current["thread"] = t
 
-# ✅ PUBLIC API — what main.py imports
-def speak_text(text: str, voice="shimmer", save_path="tts_latest.wav") -> bytes:
-    return tts_openai(text, voice=voice, save_path=save_path)
+    t.start()
+    return done_event

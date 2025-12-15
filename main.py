@@ -1,5 +1,6 @@
+# main.py
 import os
-import signal
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,71 +17,87 @@ from conversation_saver import ConversationSaver
 
 
 EXIT_PHRASES = [
-    "bye",
-    "exit",
-    "quit",
-    "goodbye",
-    "תודה",
-    "סיימנו",
-    "להתראות",
+    "bye", "exit", "quit", "goodbye",
+    "תודה", "סיימנו", "להתראות",
 ]
 
 
 def should_exit(text: str) -> bool:
-    if not text:
-        return False
-    t = text.lower()
-    return any(p in t for p in EXIT_PHRASES)
+    return any(p in text.lower() for p in EXIT_PHRASES)
 
 
 def main():
+    print("========== AgenTeam Phone Agent ==========")
+    print(f"[DEBUG] RUNPOD={RUNPOD}")
+    print("[DEBUG] MODE = LOCAL SPEAKERS (NO BARGE-IN)")
+
     saver = ConversationSaver()
     stt = STTManager()
 
     print("\n📞 Call started\n")
 
-    # --- AI greeting ---
-    greeting = "היי, שלום. מדבר הסוכן החכם. איך אפשר לעזור?"
+    # ---------- Greeting ----------
+    greeting = "היי, שלום. מדברת דנה מדניאל סושיאל. איך אפשר לעזור?"
     saver.add_ai(greeting)
-    speak_text(greeting)
+
+    print("[DEBUG] AI speaking greeting (mic ignored)")
+    done = speak_text(greeting)
+    done.wait(timeout=10)
+    time.sleep(0.2)  # audio settle
 
     try:
         while True:
+            # ---------- USER LISTENING ----------
             if RUNPOD:
-                print("RUNPOD mode: using input.wav")
                 audio_input = "input.wav"
             else:
-                print("\n🎤 Listening...")
+                print("\n🎤 Listening for user (AI is silent)...")
                 audio_input = record_until_silence()
 
-            user_text = stt.transcribe(audio_input)
+            user_text = (stt.transcribe(audio_input) or "").strip()
+            print(f"[DEBUG] STT: '{user_text}'")
 
-            if not user_text.strip():
-                print("[Call] No speech detected, continuing...")
+            if not user_text:
+                print("[DEBUG] No user speech detected")
                 continue
 
-            print(f"👤 User: {user_text}")
             saver.add_user(user_text)
+            print(f"👤 User: {user_text}")
 
             if should_exit(user_text):
                 farewell = "מעולה, תודה רבה. יום טוב ולהתראות."
                 saver.add_ai(farewell)
-                speak_text(farewell)
+
+                print("[DEBUG] AI farewell")
+                done = speak_text(farewell)
+                done.wait(timeout=10)
                 break
 
-            ai_text = ask_openai(user_text)
+            # ---------- AI THINKING ----------
+            print("[DEBUG] LLM request")
+            ai_text = (ask_openai(user_text) or "").strip()
+            print(f"[DEBUG] LLM response: '{ai_text}'")
 
-            print(f"🤖 AI: {ai_text}")
+            if not ai_text:
+                continue
+
             saver.add_ai(ai_text)
-            speak_text(ai_text)
+            print(f"🤖 AI: {ai_text}")
+
+            # ---------- AI SPEAKING ----------
+            print("[DEBUG] AI speaking (mic ignored)")
+            done = speak_text(ai_text)
+            done.wait(timeout=10)
+            time.sleep(0.2)
 
     except KeyboardInterrupt:
-        print("\n📴 Call interrupted by user")
+        print("\n📴 Ctrl+C")
 
     finally:
         saver.save()
         print("📁 Conversation saved")
         print("📞 Call ended")
+        print("=========================================")
 
 
 if __name__ == "__main__":
